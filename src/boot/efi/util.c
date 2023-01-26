@@ -638,12 +638,16 @@ EFI_STATUS open_volume(EFI_HANDLE device, EFI_FILE **ret_file) {
         assert(ret_file);
 
         err = BS->HandleProtocol(device, &FileSystemProtocol, (void **) &volume);
-        if (err != EFI_SUCCESS)
+        if (err != EFI_SUCCESS) {
+                Print(L"FAILED TO HANDLE PROT; err=%d\n", err);
                 return err;
+        }
 
         err = volume->OpenVolume(volume, &file);
-        if (err != EFI_SUCCESS)
+        if (err != EFI_SUCCESS) {
+                Print(L"FAILED TO OPEN VOLUME; err=%d\n", err);
                 return err;
+        }
 
         *ret_file = file;
         return EFI_SUCCESS;

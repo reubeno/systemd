@@ -1501,14 +1501,18 @@ static void config_entry_add_type1(
                 }
         }
 
-        if (entry->type == LOADER_UNDEFINED)
+        if (entry->type == LOADER_UNDEFINED) {
+                Print(L"**undef\n");
                 return;
+        }
 
         /* check existence */
         _cleanup_(file_closep) EFI_FILE *handle = NULL;
         err = root_dir->Open(root_dir, &handle, entry->loader, EFI_FILE_MODE_READ, 0ULL);
-        if (err != EFI_SUCCESS)
+        if (err != EFI_SUCCESS) {
+                Print(L"**failed to open: %s\n", entry->loader);
                 return;
+        }
 
         entry->device = device;
         entry->id = xstrdup16(file);
@@ -1624,11 +1628,15 @@ static void config_load_entries(
         assert(device);
         assert(root_dir);
 
+        Print(L"...looking in loader/entries...\n");
+
         /* Adds Boot Loader Type #1 entries (i.e. /loader/entries/….conf) */
 
         err = open_directory(root_dir, L"\\loader\\entries", &entries_dir);
-        if (err != EFI_SUCCESS)
+        if (err != EFI_SUCCESS) {
+                Print(L"... couldn't find that dir\n");
                 return;
+        }
 
         for (;;) {
                 _cleanup_free_ char *content = NULL;
@@ -1636,6 +1644,8 @@ static void config_load_entries(
                 err = readdir_harder(entries_dir, &f, &f_size);
                 if (err != EFI_SUCCESS || !f)
                         break;
+
+                Print(L"LOOKING AT %s\n", f->FileName);
 
                 if (f->FileName[0] == '.')
                         continue;
@@ -1647,9 +1657,13 @@ static void config_load_entries(
                 if (startswith(f->FileName, L"auto-"))
                         continue;
 
+                Print(L"READING FiLE...\n");
+
                 err = file_read(entries_dir, f->FileName, 0, 0, &content, NULL);
-                if (err == EFI_SUCCESS)
+                if (err == EFI_SUCCESS) {
+                        Print(L"ADDING ENTRY\n");
                         config_entry_add_type1(config, device, root_dir, L"\\loader\\entries", f->FileName, content, loaded_image_path);
+                }
         }
 }
 
@@ -2240,11 +2254,15 @@ static void config_load_xbootldr(
         assert(device);
 
         err = partition_open(XBOOTLDR_GUID, device, &new_device, &root_dir);
-        if (err != EFI_SUCCESS)
+        if (err != EFI_SUCCESS) {
+                Print(L"ERROR: FAILED TO OPEN XBOOTLDR PARTITION; d=%d\n", err);
                 return;
+        }
 
+        Print(L"TRYING TO ADD XBOOTLDR ENTRIES\n");
         config_entry_add_unified(config, new_device, root_dir);
         config_load_entries(config, new_device, root_dir, NULL);
+        Print(L"FINISHED TRYING TO DO THAT ^^^\n");
 }
 
 static EFI_STATUS initrd_prepare(
@@ -2335,14 +2353,20 @@ static EFI_STATUS image_start(
         if (entry->call)
                 (void) entry->call();
 
+        Print(L"OPENING VOLUME\n");
+
         _cleanup_(file_closep) EFI_FILE *image_root = NULL;
         err = open_volume(entry->device, &image_root);
         if (err != EFI_SUCCESS)
                 return log_error_status_stall(err, L"Error opening root path: %r", err);
 
+        Print(L"FD PATH\n");
+
         err = make_file_device_path(entry->device, entry->loader, &path);
         if (err != EFI_SUCCESS)
                 return log_error_status_stall(err, L"Error making file device path: %r", err);
+
+        Print(L"PREPARING INITRD\n");
 
         UINTN initrd_size = 0;
         _cleanup_free_ void *initrd = NULL;
@@ -2350,6 +2374,8 @@ static EFI_STATUS image_start(
         err = initrd_prepare(image_root, entry, &options_initrd, &initrd, &initrd_size);
         if (err != EFI_SUCCESS)
                 return log_error_status_stall(err, L"Error preparing initrd: %r", err);
+
+        Print(L"SHIM_LOAD_IMAGE\n");
 
         err = shim_load_image(parent_image, path, &image);
         if (err != EFI_SUCCESS)
@@ -2361,11 +2387,14 @@ static EFI_STATUS image_start(
                         return log_error_status_stall(err, L"Error loading %s: %r", entry->devicetree, err);
         }
 
+        Print(L"IR REGISTER\n");
+
         _cleanup_(cleanup_initrd) EFI_HANDLE initrd_handle = NULL;
         err = initrd_register(initrd, initrd_size, &initrd_handle);
         if (err != EFI_SUCCESS)
                 return log_error_status_stall(err, L"Error registering initrd: %r", err);
 
+        Print(L"PROTOCOL BIZ\n");
         EFI_LOADED_IMAGE_PROTOCOL *loaded_image;
         err = BS->HandleProtocol(image, &LoadedImageProtocol, (void **) &loaded_image);
         if (err != EFI_SUCCESS)
@@ -2381,10 +2410,18 @@ static EFI_STATUS image_start(
         }
 
         efivar_set_time_usec(LOADER_GUID, L"LoaderTimeExecUSec", 0);
+
+        Print(L"STARTING IMAGE...\n");
         err = BS->StartImage(image, NULL, NULL);
+        Print(L"RETURNED??\n");
+
         graphics_mode(false);
-        if (err == EFI_SUCCESS)
+        if (err == EFI_SUCCESS) {
+                Print(L"SUCCEEDED?\n");
                 return EFI_SUCCESS;
+        }
+
+        Print(L"FALLBACK?\n");
 
         /* Try calling the kernel compat entry point if one exists. */
         if (err == EFI_UNSUPPORTED && entry->type == LOADER_LINUX) {
@@ -2567,13 +2604,17 @@ static void config_load_all_entries(
         config_load_defaults(config, root_dir);
 
         /* scan /EFI/Linux/ directory */
+        Print(L"SCANNING /EFI/LINUX\n");
         config_entry_add_unified(config, loaded_image->DeviceHandle, root_dir);
 
         /* scan /loader/entries/\*.conf files */
+        Print(L"SCANNING LOAD ENTRIES\n");
         config_load_entries(config, loaded_image->DeviceHandle, root_dir, loaded_image_path);
 
         /* Similar, but on any XBOOTLDR partition */
+        Print(L"SCANNING XBOOTLDR ENTRIES\n");
         config_load_xbootldr(config, loaded_image->DeviceHandle);
+        Print(L"DONE SCANNING XBOOTLDR ENTRIES\n");
 
         /* sort entries after version number */
         sort_pointer_array((void **) config->entries, config->entry_count, (compare_pointer_func_t) config_entry_compare);
@@ -2585,6 +2626,8 @@ static void config_load_all_entries(
                                      L"auto-efi-shell", 's', L"EFI Shell", L"\\shell" EFI_MACHINE_TYPE_NAME ".efi");
         config_entry_add_loader_auto(config, loaded_image->DeviceHandle, root_dir, loaded_image_path,
                                      L"auto-efi-default", '\0', L"EFI Default Loader", NULL);
+
+        Print(L"1\n");
 
         if (config->auto_firmware && FLAGS_SET(get_os_indications_supported(), EFI_OS_INDICATIONS_BOOT_TO_FW_UI)) {
                 ConfigEntry *entry = xnew(ConfigEntry, 1);
@@ -2605,15 +2648,25 @@ static void config_load_all_entries(
         if (config->secure_boot_enroll != ENROLL_OFF)
                 secure_boot_discover_keys(config, root_dir);
 
+        Print(L"2\n");
+
         if (config->entry_count == 0)
                 return;
 
+        Print(L"3\n");
+
         config_write_entries_to_variable(config);
+
+        Print(L"4\n");
 
         config_title_generate(config);
 
+        Print(L"5\n");
+
         /* select entry by configured pattern or EFI LoaderDefaultEntry= variable */
         config_default_entry_select(config);
+
+        Print(L"6\n");
 }
 
 static EFI_STATUS discover_root_dir(EFI_LOADED_IMAGE_PROTOCOL *loaded_image, EFI_FILE **ret_dir) {
@@ -2664,6 +2717,8 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *sys_table) {
                 goto out;
         }
 
+        Print(L"LOADED.\n");
+
         /* select entry or show menu when key is pressed or timeout is set */
         if (config.force_menu || config.timeout_sec > 0)
                 menu = true;
@@ -2681,6 +2736,8 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *sys_table) {
                                 menu = true;
                 }
         }
+
+        Print(L"LOOPING.\n");
 
         for (;;) {
                 ConfigEntry *entry;
@@ -2707,11 +2764,15 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *sys_table) {
                         continue;
                 }
 
+                Print(L"SAVING.\n");
+
                 config_entry_bump_counters(entry, root_dir);
                 save_selected_entry(&config, entry);
 
                 /* Optionally, read a random seed off the ESP and pass it to the OS */
                 (void) process_random_seed(root_dir);
+
+                Print(L"STARTING: id=%s ldr=%s.\n", entry->id, entry->loader);
 
                 err = image_start(image, entry);
                 if (err != EFI_SUCCESS)
@@ -2720,6 +2781,9 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *sys_table) {
                 menu = true;
                 config.timeout_sec = 0;
         }
+
+        Print(L"DOWN HERE.\n");
+
         err = EFI_SUCCESS;
 out:
         BS->CloseProtocol(image, &LoadedImageProtocol, image, NULL);

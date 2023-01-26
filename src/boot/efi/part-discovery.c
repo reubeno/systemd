@@ -268,17 +268,23 @@ EFI_STATUS partition_open(const EFI_GUID *type, EFI_HANDLE *device, EFI_HANDLE *
         assert(ret_root_dir);
 
         err = find_device(type, device, &partition_path);
-        if (err != EFI_SUCCESS)
+        if (err != EFI_SUCCESS) {
+                Print(L"FAILED TO FIND DEVICE; err=%d\n", err);
                 return err;
+        }
 
         EFI_DEVICE_PATH *dp = partition_path;
         err = BS->LocateDevicePath(&BlockIoProtocol, &dp, &new_device);
-        if (err != EFI_SUCCESS)
+        if (err != EFI_SUCCESS) {
+                Print(L"FAILED TO FIND DEVICE PATH; err=%d\n", err);
                 return err;
+        }
 
         err = open_volume(new_device, &root_dir);
-        if (err != EFI_SUCCESS)
+        if (err != EFI_SUCCESS) {
+                Print(L"FAILED TO OPEN VOLUME; err=%d\n", err);
                 return err;
+        }
 
         if (ret_device)
                 *ret_device = new_device;
